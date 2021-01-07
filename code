@@ -1,0 +1,98 @@
+import tushare as ts
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from datetime import datetime
+token = '1501ffe708345cffa38d9bbc0bd371e93b4b7412e7a8e1f811d3c442'
+pro = ts.pro_api(token)
+
+# 选取的都是银行股，构建一个银行指数
+
+codes = ['601288.SH','601166.SH','600036.SH','601398.SH','601939.SH','600000.SH','601328.SH','600016.SH','601988.SH','600919.SH']
+
+# 定义起始日期和获取今天日期
+
+start_date = '20150101'
+today = datetime.strftime(datetime.now(),'%Y%m%d')
+print(start_date,today)
+
+# 提取每一个股票代码下2015~近期的数据
+
+df = pd.DataFrame(columns = ['trade_date'])
+for i in range(len(codes)):
+    data = pro.daily(ts_code=codes[i],
+                     start_date=start_date,
+                     end_date=today)
+    data.index = pd.to_datetime(data['trade_date'])
+    
+
+    # 获取股票的复权因子数据
+    factor = pro.adj_factor(ts_code=codes[i],
+                            start_date=start_date,
+                            end_date=today)
+    factor.index = pd.to_datetime(factor['trade_date'])
+    
+    # 合并股票收盘数据和因子数据，进行复权处理，得出复权后的收盘价
+    data = pd.merge(data,factor,left_index=True,right_index=True,how='inner')
+    data = data.sort_index()
+    data['close'] = data['close']*data['adj_factor']/data.loc[today,'adj_factor']
+    data = data[['close']]
+    # 重命名close为股票代码
+    data.rename(columns={'close':codes[i]},inplace=True)
+    df = pd.merge(df,data,left_index=True,right_index=True,how='outer')
+
+df = df.drop(['trade_date'],axis=1)
+
+# 因停牌导致的缺失值，填充前一个交易日的价格
+
+df = df.fillna(method='bfill')
+
+# 计算每天百分比的变化
+
+df = df.pct_change().dropna()
+
+# 此数据就为每个股票每天的收益率
+
+df
+
+# 数据准备完了，按照等权重计算10个股票的均值收益率
+
+# 即对df横向求均值
+
+index_ret = df.apply(lambda x:np.mean(x),axis=1)
+
+# 计算指数的均值收益率，标准差，夏普比率
+
+index_ret_mean = index_ret.mean() # 均值收益率
+index_ret_std = index_ret.std() # 标准差
+index_ret_sharp = index_ret_mean/index_ret_std # 夏普比率
+print('指数收益率均值:',index_ret_mean)
+print('指数收益标准差 :',index_ret_std)
+print('指数收益夏普率:',index_ret_sharp)
+
+# 我们假设构建的银行指数初始值为100，那么这个指数的每天数据就是
+
+index = 100*(index_daily+1).cumprod()
+
+# 插入初始日期
+
+index.loc[datetime.strptime('2015-01-05','%Y-%m-%d')] = 100
+index = index.sort_index()
+index
+
+# 画出走势图
+
+index.plot(figsize=(12,5))
+plt.show()
+
+pd.DataFrame(index,columns=['index'])
+
+# 保存数据
+
+# 保存股票收益数据
+
+df.to_csv('stocks_daily_return.csv',index=False)
+
+# 保存生成的指数数据
+
+pd.DataFrame(index,columns=['index']).to_csv('index.csv')
